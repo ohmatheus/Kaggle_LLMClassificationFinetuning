@@ -168,3 +168,6 @@ Trainning/kaggle/input/llm-classification-finetuning/sample_submission.csv
 Trainning/kaggle/input/llm-classification-finetuning/test.csv
 Trainning/kaggle/input/llm-classification-finetuning/train.csv
 Trainning/kaggle/working/best_model.weights.h5
+Data/train_preprocessed_full.csv
+Data/train_preprocessed_mini.csv
+Trainning/Prebuilt/PreferencePredictionModel.pt
