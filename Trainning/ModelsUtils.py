@@ -4,6 +4,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from transformers import AutoModel, AutoTokenizer
 
+from tqdm import tqdm
 
 
 #-------------------------------------------------------------------
@@ -112,6 +113,119 @@ def predict(model, dataloader, device="cuda"):
             predictions.extend(batch_probs)
 
     return predictions
+
+
+
+#-------------------------------------------------------------------
+# Evaluation (use for trainning)
+def evaluate_model(model, dataloader, device="cuda"):
+    model = model.to(device)
+    model.eval()
+    total_loss = 0.0
+    correct = 0
+    total_samples = 0
+
+    # Use BCEWithLogitsLoss for one-hot encoded labels
+    loss_fn = nn.CrossEntropyLoss()
+    #loss_fn = nn.BCEWithLogitsLoss()
+    #loss_fn = nn.BCELoss()
+
+    with torch.no_grad():
+        for batch in dataloader:
+            # Move data to device
+            input_ids_resp1 = batch['input_ids_resp1'].to(device)
+            attention_mask_resp1 = batch['attention_mask_resp1'].to(device)
+            input_ids_resp2 = batch['input_ids_resp2'].to(device)
+            attention_mask_resp2 = batch['attention_mask_resp2'].to(device)
+            features = batch['features'].to(device)
+            labels = batch['label'].to(device)  # One-hot encoded labels
+
+            # Forward pass
+            logits = model(
+                input_ids_resp1=input_ids_resp1,
+                attention_mask_resp1=attention_mask_resp1,
+                input_ids_resp2=input_ids_resp2,
+                attention_mask_resp2=attention_mask_resp2,
+                features=features
+            )
+
+            # Compute loss
+            loss = loss_fn(logits, labels)
+            total_loss += loss.item()
+
+            # Compute predictions and accuracy
+            predictions = torch.argmax(logits, dim=1)  # Class with highest score
+            true_labels = torch.argmax(labels, dim=1)  # Convert one-hot to class indices
+            
+            correct += (predictions == true_labels).sum().item()
+            total_samples += labels.size(0)
+
+    # Calculate average loss and accuracy
+    avg_loss = total_loss / len(dataloader)
+    accuracy = correct / total_samples
+
+    return {
+        'loss': avg_loss,
+        'accuracy': accuracy
+    }
+
+
+
+#-------------------------------------------------------------------
+# Training loop
+def train_model(model, dataloader, valid_dataloader, optimizer, scheduler = None, num_epochs=5, device="cuda"):
+    model = model.to(device)
+    model.train()
+    min_val_loss = float('inf') #checkpoint
+
+    for epoch in range(num_epochs):
+        total_loss = 0
+        model.train()
+        
+        for batch in tqdm(dataloader, total=len(dataloader), unit='row'):
+            optimizer.zero_grad()
+            
+            logits = model(
+                input_ids_resp1=batch['input_ids_resp1'].to(device),
+                attention_mask_resp1=batch['attention_mask_resp1'].to(device),
+                input_ids_resp2=batch['input_ids_resp2'].to(device),
+                attention_mask_resp2=batch['attention_mask_resp2'].to(device),
+                features=batch['features'].to(device)
+            )
+            
+            # One-hot labels
+            labels = batch['label'].to(device)
+            
+        
+            #loss = nn.BCEWithLogitsLoss()(logits, labels)
+            loss = nn.CrossEntropyLoss()(logits, labels)
+        
+            # Use BCELoss for one-hot encoded labels
+            #loss = nn.BCELoss()(logits, labels) #more stable, It combines a sigmoid activation and binary cross-entropy loss.
+            loss.backward()
+            optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
+            
+            total_loss += loss.item()
+            
+        
+        metrics = evaluate_model(model, valid_dataloader, device=device)
+        
+        if min_val_loss > metrics['loss']:
+            min_val_loss = metrics['loss']
+            torch.save({
+                        'epoch': epoch,
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        }, f'PreferencePredictionModel.pt')
+            print(f"{metrics['loss']} val loss is better than previous {min_val_loss}, saving checkpoint epoch: ", epoch)
+            
+
+        print(f"Trainning Epoch {epoch + 1}, Accumulated Train Loss: {total_loss / len(dataloader)}")
+        print(f"Eval : Valid Loss: {metrics['loss']}, Valid Accuracy : {metrics['accuracy']}")
+        for param_group in optimizer.param_groups:
+            print(f"Current learning rate: {param_group['lr']}")
 
 
 
